@@ -1,6 +1,3 @@
-Here's a README.md for your project:
-
-```markdown
 # Práctica 2: Limpieza y Análisis de Datos de Películas de Bollywood
 
 ## Descripción
