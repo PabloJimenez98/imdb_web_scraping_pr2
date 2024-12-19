@@ -51,7 +51,7 @@ El script genera las siguientes visualizaciones:
 5. Distribución de duración de películas
 6. Top 10 directores por número de películas
 
-## Uso
+## Uso (Puede tardar varios minutos)
 ```python
 python imdb_etl.py
 ```
@@ -70,9 +70,4 @@ CC BY-SA 4.0
 Para instalar todas las dependencias ejecutando:
 ```bash
 pip install -r requirements.txt
-```
-
-Para ejecutar el programa (Puede tardar varios minutos):
-```bash
-python -m source 
 ```
