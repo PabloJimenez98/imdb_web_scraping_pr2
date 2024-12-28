@@ -16,12 +16,18 @@ class MovieDataExtractor:
         self.logger = Logger()
 
     def extract_main_dataset(self):
+        self.logger.log("Starting extraction of main dataset...")
         self.logger.log("Loading main dataset from bollywood_movie_list.csv")
-        df_main = pd.read_csv('bollywood_movie_list.csv')
+        df_main = pd.read_csv('datasets/bollywood_movie_list.csv')
+        self.logger.log(f"Main dataset loaded with {len(df_main)} rows")
+        
+        self.logger.log("Normalizing movie titles...")
         df_main['title_normalized'] = df_main['title'].str.lower().str.strip()
+        self.logger.log("Title normalization completed")
         return df_main
 
     def extract_imdb_datasets(self):
+        self.logger.log("Starting extraction of IMDB datasets...")
         datasets = {}
         files = {
             'akas': 'title.akas.tsv',
@@ -32,10 +38,11 @@ class MovieDataExtractor:
         }
 
         for key, file in files.items():
-            self.logger.log(f"Loading {file}")
+            self.logger.log(f"Loading {file}...")
             datasets[key] = pd.read_csv(file, sep='\t')
-            self.logger.log(f"{key} dataset loaded with {len(datasets[key])} rows")
+            self.logger.log(f"{key} dataset loaded with {len(datasets[key])} rows and {len(datasets[key].columns)} columns")
 
+        self.logger.log("All IMDB datasets loaded successfully")
         return datasets
 
 class MovieDataTransformer:
@@ -43,25 +50,35 @@ class MovieDataTransformer:
         self.logger = Logger()
 
     def merge_initial_datasets(self, df_main, df_akas):
+        self.logger.log("Starting initial dataset merge...")
+        self.logger.log("Preparing akas dataset for merge...")
         df_akas_slim = df_akas[['primaryTitle', 'tconst']].copy()
         df_akas_slim['title_normalized'] = df_akas_slim['primaryTitle'].str.lower().str.strip()
         df_akas_slim = df_akas_slim.drop_duplicates(subset=['title_normalized'], keep='first')
         
+        self.logger.log("Merging main dataset with akas dataset...")
         merged = pd.merge(df_main, df_akas_slim, on='title_normalized', how='left')
         self.logger.log(f"Initial merge completed with {len(merged)} rows")
+        self.logger.log(f"Match rate: {(merged['tconst'].notna().sum() / len(merged)) * 100:.2f}%")
         return merged
 
     def process_alternative_titles(self, merged_df, akas_df):
+        self.logger.log("Processing alternative titles...")
         akas_grouped = akas_df.groupby('titleId')['title'].apply(
             lambda x: ', '.join(str(val) for val in x if pd.notna(val))
         ).reset_index()
         akas_grouped.columns = ['titleId', 'alternative_titles']
-        return pd.merge(merged_df, akas_grouped, left_on='tconst', right_on='titleId', how='left')
+        result = pd.merge(merged_df, akas_grouped, left_on='tconst', right_on='titleId', how='left')
+        self.logger.log(f"Alternative titles processed for {len(result)} movies")
+        return result
 
     def process_crew_data(self, merged_df, crew_df, names_df):
+        self.logger.log("Starting crew data processing...")
+        self.logger.log(f"Creating names dictionary from {len(names_df)} entries...")
         names_map = names_df.set_index('nconst')['primaryName'].to_dict()
 
         def process_crew_column(df, column_name):
+            self.logger.log(f"Processing {column_name}...")
             df = df.merge(crew_df[['tconst', column_name]], on='tconst', how='left')
             df[column_name] = df[column_name].fillna('\\N')
             df = df.assign(temp_id=df[column_name].str.split(','))
@@ -72,33 +89,45 @@ class MovieDataTransformer:
                 lambda x: ', '.join(name for name in x if name)
             ).reset_index(name=column_name)
             
+            self.logger.log(f"Finished processing {column_name}")
             return df.drop([column_name, 'temp_id', f'{column_name}_name'], axis=1).drop_duplicates(), names_grouped
 
         merged_df, director_names = process_crew_column(merged_df, 'directors')
         merged_df, writer_names = process_crew_column(merged_df, 'writers')
 
+        self.logger.log("Merging crew information back to main dataset...")
         merged_df = merged_df.merge(director_names, on='tconst', how='left')
         merged_df = merged_df.merge(writer_names, on='tconst', how='left')
         
+        self.logger.log("Crew data processing completed")
         return merged_df
 
     def clean_numerical_data(self, data):
-        # Clean year and duration
-        data['year'] = data['year'].replace(['No Year', '\\N'], np.nan).fillna(data['startYear']).fillna(0)
-        data['year'] = pd.to_numeric(data['year'], errors='coerce').fillna(0).astype(int)
+        self.logger.log("Starting numerical data cleaning...")
         
-        data['duration'] = data['duration'].replace(['No Duration', '\\N'], np.nan).fillna(data['runtimeMinutes']).fillna(0)
+        # Clean year and duration
+        self.logger.log("Cleaning year and duration fields...")
+        data['year'] = data['year'].replace(['No Year', '\\N'], np.nan).fillna(0)
+        data['year'] = pd.to_numeric(data['year'], errors='coerce').fillna(0).astype(int)
+        self.logger.log(f"Year range: {data['year'].min()} - {data['year'].max()}")
+        
+        data['duration'] = data['duration'].replace(['No Duration', '\\N'], np.nan).fillna(0)
         data['duration'] = pd.to_numeric(data['duration'], errors='coerce').fillna(0).astype(int)
+        self.logger.log(f"Average duration: {data['duration'].mean():.2f} minutes")
 
         # Clean votes
+        self.logger.log("Cleaning votes data...")
         data['votes'] = data['votes'].astype(str).apply(self._clean_number)
         data['votes'] = pd.to_numeric(data['votes'], errors='coerce').fillna(0).astype(int)
+        self.logger.log(f"Total number of votes processed: {data['votes'].sum():,}")
 
         # Clean other numerical columns
+        self.logger.log("Cleaning ratings and age data...")
         data['age_rating'] = data['age_rating'].replace(['No Age Rating', '\\N'], np.nan).fillna('Unknown')
-        data['imdb_rating'] = pd.to_numeric(data['imdb_rating'], errors='coerce').fillna(0.0)
+        data['imdb_rating'] = pd.to_numeric(data['imdb_rating'].str.replace(',', '.'), errors='coerce').fillna(0.0)
         data['metascore'] = pd.to_numeric(data['metascore'], errors='coerce').fillna(0).astype(int)
 
+        self.logger.log("Numerical data cleaning completed")
         return data
 
     @staticmethod
@@ -136,13 +165,14 @@ class MovieDataLoader:
     def __init__(self):
         self.logger = Logger()
 
-    def save_final_dataset(self, data, filename='cleaned_movies_data.csv'):
+    def save_final_dataset(self, data, filename='cleaned_movies_data_new.csv'):
         self.logger.log(f"Saving cleaned dataset to {filename}")
         data.to_csv(filename, index=False)
         self.logger.log("Dataset saved successfully")
 
 class DatasetVisualizer:
     def __init__(self, csv_path, output_dir="image"):
+        self.logger = Logger()
         self.csv_path = csv_path
         self.output_dir = output_dir
         self.data = None
@@ -151,7 +181,9 @@ class DatasetVisualizer:
 
     def _load_data(self):
         """Load the dataset from the given CSV path."""
+        self.logger.log(f"Loading dataset from {self.csv_path}")
         self.data = pd.read_csv(self.csv_path)
+        self.logger.log(f"Dataset loaded with {len(self.data)} rows")
 
     def _prepare_output_dir(self):
         """Create the output directory if it doesn't exist."""
@@ -232,12 +264,14 @@ class DatasetVisualizer:
 
     def generate_all_plots(self):
         """Generate all visualizations and save them to the output directory."""
+        self.logger.log("Starting visualization generation...")
         self.plot_imdb_rating_distribution()
         self.plot_genre_frequency()
         self.plot_imdb_rating_vs_votes()
         self.plot_movies_per_year()
         self.plot_duration_distribution()
         self.plot_top_directors()
+        self.logger.log("All visualizations generated successfully")
 
 
 def main():
@@ -253,7 +287,7 @@ def main():
     transformer = MovieDataTransformer()
     
     # Initial merge
-    merged_df = transformer.merge_initial_datasets(df_main, imdb_data['akas'])
+    merged_df = transformer.merge_initial_datasets(df_main, imdb_data['basics'])
     
     # Process alternative titles and crew data
     merged_df = transformer.process_alternative_titles(merged_df, imdb_data['akas'])
@@ -269,7 +303,7 @@ def main():
 
     logger.log("ETL process completed")
 
-    visualizer = DatasetVisualizer("cleaned_movies_data.csv")
+    visualizer = DatasetVisualizer("cleaned_movies_data_new.csv")
     visualizer.generate_all_plots()
 
 if __name__ == "__main__":
